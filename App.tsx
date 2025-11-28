@@ -7,6 +7,7 @@ import { ParticleShape } from './types';
 export interface InteractionData {
   scale: number;
   position: { x: number; y: number };
+  rotation: { x: number; y: number; z: number };
 }
 
 const App: React.FC = () => {
@@ -15,10 +16,10 @@ const App: React.FC = () => {
   const [isTracking, setIsTracking] = useState<boolean>(false);
   
   // Ref to share interaction data between HandTracker and Three.js Loop without re-renders
-  // Default: scale 1.0, position center (0,0)
   const interactionRef = useRef<InteractionData>({
     scale: 1.0,
-    position: { x: 0, y: 0 }
+    position: { x: 0, y: 0 },
+    rotation: { x: 0, y: 0, z: 0 }
   });
 
   // Callback for HandTracker to update the ref

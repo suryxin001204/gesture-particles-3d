@@ -83,44 +83,52 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onInteractionUpdate, setIsTra
       let scale = 1.0;
       let posX = 0;
       let posY = 0;
+      let rotX = 0;
+      let rotY = 0;
+      let rotZ = 0;
 
       if (result.landmarks && result.landmarks.length > 0) {
-        // --- 1. Scale Logic (Distance) ---
+        // --- TWO HANDS LOGIC ---
         if (result.landmarks.length === 2) {
-            // Two hands
-            const hand1 = result.landmarks[0][0];
-            const hand2 = result.landmarks[1][0];
+            const hand1 = result.landmarks[0][0]; // Wrist
+            const hand2 = result.landmarks[1][0]; // Wrist
             
+            // 1. Scale (Distance)
             const dist = Math.sqrt(
                 Math.pow(hand1.x - hand2.x, 2) + 
                 Math.pow(hand1.y - hand2.y, 2)
             );
-            
-            // Increased Range: Map 0.1->0.8 distance to 0.5->2.5 scale
             const clampedDist = Math.max(0.1, Math.min(dist, 0.8));
             scale = 0.5 + ((clampedDist - 0.1) / 0.7) * 2.0;
 
-            // --- 2. Position Logic (Center point) ---
-            // Average of two wrists
+            // 2. Position (Center point)
             const avgX = (hand1.x + hand2.x) / 2;
             const avgY = (hand1.y + hand2.y) / 2;
             
-            // Map 0..1 to -4..4 range
-            // Note: MediaPipe X is 0(left)..1(right) of the VIDEO source.
-            // Since we flip video with CSS (scale-x-[-1]), visual left is video right.
-            // To make particles follow visual hand: 
-            // If I move hand to visual right -> video sees hand at x=0 (left) -> mapped X should be positive.
-            // (0.5 - x) flips the direction.
             posX = (0.5 - avgX) * 8; 
-            posY = -(avgY - 0.5) * 6; // Invert Y (Screen Y down is positive, 3D Y up is positive)
+            posY = -(avgY - 0.5) * 6;
+
+            // 3. Rotation (Flip/Tilt)
+            
+            // Z-Axis (Roll): Calculate angle between hands
+            // If hand1 is left and hand2 is right, dy=0 is 0 rads.
+            // We use atan2(dy, dx)
+            const dx = hand2.x - hand1.x;
+            const dy = hand2.y - hand1.y;
+            rotZ = -Math.atan2(dy, dx); // Negative because screen Y is inverted vs 3D
+
+            // X/Y Axis (Tilt): Based on how far hands are from center
+            // Looking up/down/left/right creates a perspective tilt
+            rotY = (0.5 - avgX) * 2.0; // Left/Right tilt
+            rotX = (avgY - 0.5) * 2.0; // Up/Down tilt
 
         } else if (result.landmarks.length === 1) {
-            // One hand
+            // --- ONE HAND LOGIC ---
             const thumb = result.landmarks[0][4];
             const index = result.landmarks[0][8];
             const wrist = result.landmarks[0][0];
 
-            // Pinch distance
+            // Scale (Pinch)
             const dist = Math.sqrt(
                 Math.pow(thumb.x - index.x, 2) + 
                 Math.pow(thumb.y - index.y, 2)
@@ -128,13 +136,23 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onInteractionUpdate, setIsTra
             const clampedDist = Math.max(0.02, Math.min(dist, 0.2));
             scale = 0.5 + ((clampedDist - 0.02) / 0.18) * 1.5;
 
-            // Position based on Wrist
+            // Position
             posX = (0.5 - wrist.x) * 8;
             posY = -(wrist.y - 0.5) * 6;
+
+            // Rotation (Tilt based on position)
+            // Move hand left -> rotate object to look left
+            rotY = (0.5 - wrist.x) * 3.0;
+            rotX = (wrist.y - 0.5) * 3.0;
+            // No Z-roll for single hand usually, or maybe wrist angle (complex to calc reliably)
         }
       }
 
-      onInteractionUpdate({ scale, position: { x: posX, y: posY } });
+      onInteractionUpdate({ 
+        scale, 
+        position: { x: posX, y: posY },
+        rotation: { x: rotX, y: rotY, z: rotZ }
+      });
     }
 
     requestRef.current = requestAnimationFrame(predictWebcam);

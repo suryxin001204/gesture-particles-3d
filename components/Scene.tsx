@@ -18,6 +18,7 @@ const Particles: React.FC<SceneProps> = ({ currentShape, color, interactionRef }
   // Internal refs for smoothing
   const currentScaleRef = useRef<number>(1.0);
   const currentPosRef = useRef<THREE.Vector2>(new THREE.Vector2(0, 0));
+  const currentRotRef = useRef<THREE.Euler>(new THREE.Euler(0, 0, 0));
   
   // Create geometry buffers
   const { positions, currentPositions, targetPositions } = useMemo(() => {
@@ -53,52 +54,69 @@ const Particles: React.FC<SceneProps> = ({ currentShape, color, interactionRef }
     const positionAttribute = geometry.attributes.position;
     
     // Lerp Speed (Response speed)
-    // Increased to 0.15 for snappier movement as requested
     const lerpSpeed = 0.15; 
     
     // Get interactive data
-    const { scale: targetScale, position: targetPos } = interactionRef.current;
+    const { 
+      scale: targetScale, 
+      position: targetPos,
+      rotation: targetRot 
+    } = interactionRef.current;
     
-    // Smooth the scale
+    // 1. Smooth Scale
     currentScaleRef.current = THREE.MathUtils.lerp(currentScaleRef.current, targetScale, 0.15);
     const smoothedScale = currentScaleRef.current;
 
-    // Smooth the position
+    // 2. Smooth Position
     currentPosRef.current.x = THREE.MathUtils.lerp(currentPosRef.current.x, targetPos.x, 0.1);
     currentPosRef.current.y = THREE.MathUtils.lerp(currentPosRef.current.y, targetPos.y, 0.1);
     const offsetX = currentPosRef.current.x;
     const offsetY = currentPosRef.current.y;
+
+    // 3. Smooth Rotation
+    currentRotRef.current.x = THREE.MathUtils.lerp(currentRotRef.current.x, targetRot.x, 0.1);
+    currentRotRef.current.y = THREE.MathUtils.lerp(currentRotRef.current.y, targetRot.y, 0.1);
+    currentRotRef.current.z = THREE.MathUtils.lerp(currentRotRef.current.z, targetRot.z, 0.1);
     
-    // Animate points
+    // Pre-calculate rotation matrix to apply to every particle efficiently
+    const euler = new THREE.Euler(
+        currentRotRef.current.x,
+        currentRotRef.current.y + state.clock.getElapsedTime() * 0.05, // Add subtle auto-spin
+        currentRotRef.current.z
+    );
+    const quaternion = new THREE.Quaternion().setFromEuler(euler);
+    const tempVec = new THREE.Vector3();
+
+    // Loop through particles
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3;
 
-      // 1. Interpolate current pos towards target shape pos
+      // A. Interpolate shape morphing
       currentPositions[i3] += (targetPositions[i3] - currentPositions[i3]) * lerpSpeed;
       currentPositions[i3 + 1] += (targetPositions[i3 + 1] - currentPositions[i3 + 1]) * lerpSpeed;
       currentPositions[i3 + 2] += (targetPositions[i3 + 2] - currentPositions[i3 + 2]) * lerpSpeed;
 
-      // 2. Apply Interaction Scale & Rotation & TRANSLATION
-      const time = state.clock.getElapsedTime();
-      
-      const breathing = Math.sin(time * 2) * 0.05 + 1;
+      // B. Apply Scale
+      const breathing = Math.sin(state.clock.getElapsedTime() * 2) * 0.05 + 1;
       const isInteracting = Math.abs(smoothedScale - 1.0) > 0.05;
       const finalScale = isInteracting ? smoothedScale : smoothedScale * breathing;
 
-      // Simple rotation around Y (relative to the group center, before translation)
-      const rotSpeed = 0.1 * time;
-      const baseX = currentPositions[i3];
-      const baseZ = currentPositions[i3 + 2];
+      // C. Apply Rotation
+      tempVec.set(
+        currentPositions[i3],
+        currentPositions[i3 + 1],
+        currentPositions[i3 + 2]
+      );
       
-      const rotX = baseX * Math.cos(rotSpeed) - baseZ * Math.sin(rotSpeed);
-      const rotZ = baseX * Math.sin(rotSpeed) + baseZ * Math.cos(rotSpeed);
+      // Apply rotation quaternion
+      tempVec.applyQuaternion(quaternion);
 
-      // Apply Scale + Rotation -> Then add Offset (Translation)
+      // D. Apply Final Scale + Translation
       positionAttribute.setXYZ(
         i,
-        rotX * finalScale + offsetX,
-        currentPositions[i3 + 1] * finalScale + offsetY,
-        rotZ * finalScale
+        tempVec.x * finalScale + offsetX,
+        tempVec.y * finalScale + offsetY,
+        tempVec.z * finalScale
       );
     }
 
@@ -142,7 +160,6 @@ const Scene: React.FC<SceneProps> = (props) => {
           enableZoom={false} 
           enablePan={false} 
           autoRotate={false} 
-          dampingFactor={0.05}
         />
       </Canvas>
     </div>
