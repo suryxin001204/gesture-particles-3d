@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+import { InteractionData } from '../App';
 
 interface HandTrackerProps {
-  onInteractionUpdate: (factor: number) => void;
+  onInteractionUpdate: (data: InteractionData) => void;
   setIsTracking: (isTracking: boolean) => void;
 }
 
@@ -79,56 +80,67 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onInteractionUpdate, setIsTra
       const startTimeMs = performance.now();
       const result = landmarker.detectForVideo(video, startTimeMs);
 
-      let interactionFactor = 1.0; // Default scale
+      let scale = 1.0;
+      let posX = 0;
+      let posY = 0;
 
       if (result.landmarks && result.landmarks.length > 0) {
-        // Logic: 
-        // If 2 hands: Distance between wrist(0) of hand 1 and wrist(0) of hand 2
-        // If 1 hand: Distance between Index Tip(8) and Thumb Tip(4) (Pinch to shrink/expand)
-        
+        // --- 1. Scale Logic (Distance) ---
         if (result.landmarks.length === 2) {
-            // Two hands mode: Expansion
-            const hand1 = result.landmarks[0][0]; // Wrist
-            const hand2 = result.landmarks[1][0]; // Wrist
+            // Two hands
+            const hand1 = result.landmarks[0][0];
+            const hand2 = result.landmarks[1][0];
             
-            // Calculate Euclidean distance (normalized coords 0-1)
             const dist = Math.sqrt(
                 Math.pow(hand1.x - hand2.x, 2) + 
                 Math.pow(hand1.y - hand2.y, 2)
             );
             
-            // Reduced sensitivity:
-            // Map distance 0.1->0.8 to scale 0.8->1.8 (instead of 0.5->2.5)
-            // This provides a more stable, less jittery range
+            // Increased Range: Map 0.1->0.8 distance to 0.5->2.5 scale
             const clampedDist = Math.max(0.1, Math.min(dist, 0.8));
-            // (clampedDist - 0.1) ranges from 0 to 0.7
-            // / 0.7 makes it 0 to 1
-            // * 1.0 makes it 0 to 1.0
-            // + 0.8 makes it 0.8 to 1.8
-            interactionFactor = 0.8 + ((clampedDist - 0.1) / 0.7) * 1.0;
+            scale = 0.5 + ((clampedDist - 0.1) / 0.7) * 2.0;
+
+            // --- 2. Position Logic (Center point) ---
+            // Average of two wrists
+            const avgX = (hand1.x + hand2.x) / 2;
+            const avgY = (hand1.y + hand2.y) / 2;
+            
+            // Map 0..1 to -4..4 range
+            // Note: MediaPipe X is 0(left)..1(right) of the VIDEO source.
+            // Since we flip video with CSS (scale-x-[-1]), visual left is video right.
+            // To make particles follow visual hand: 
+            // If I move hand to visual right -> video sees hand at x=0 (left) -> mapped X should be positive.
+            // (0.5 - x) flips the direction.
+            posX = (0.5 - avgX) * 8; 
+            posY = -(avgY - 0.5) * 6; // Invert Y (Screen Y down is positive, 3D Y up is positive)
 
         } else if (result.landmarks.length === 1) {
-            // One hand pinch mode
+            // One hand
             const thumb = result.landmarks[0][4];
             const index = result.landmarks[0][8];
+            const wrist = result.landmarks[0][0];
+
+            // Pinch distance
             const dist = Math.sqrt(
                 Math.pow(thumb.x - index.x, 2) + 
                 Math.pow(thumb.y - index.y, 2)
             );
-            // Less sensitive mapping for pinch
             const clampedDist = Math.max(0.02, Math.min(dist, 0.2));
-            interactionFactor = 0.8 + ((clampedDist - 0.02) / 0.18) * 0.7;
+            scale = 0.5 + ((clampedDist - 0.02) / 0.18) * 1.5;
+
+            // Position based on Wrist
+            posX = (0.5 - wrist.x) * 8;
+            posY = -(wrist.y - 0.5) * 6;
         }
       }
 
-      onInteractionUpdate(interactionFactor);
+      onInteractionUpdate({ scale, position: { x: posX, y: posY } });
     }
 
     requestRef.current = requestAnimationFrame(predictWebcam);
   };
 
   return (
-    // Moved to bottom-right, made visible with border and higher opacity
     <div className="absolute bottom-4 right-4 w-48 h-36 z-50 rounded-xl overflow-hidden border-2 border-white/20 shadow-2xl bg-black/80">
       <video
         ref={videoRef}
